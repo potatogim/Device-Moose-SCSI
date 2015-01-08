@@ -117,8 +117,6 @@ sub execute
 
     my @data = unpack("i4 I C16", substr($iobuf, 0, 36));
 
-    print join(" ", @data), "\n";
-
     confess "SCSI I/O error $data[3] on " . $self->name if ($data[3]);
 
     return (substr($iobuf, 36), [@data[5..20]]);
