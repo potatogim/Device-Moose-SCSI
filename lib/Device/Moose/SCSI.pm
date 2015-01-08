@@ -3,7 +3,7 @@
 package Device::Moose::SCSI;
 {
     $Device::Moose::SCSI::AUTHORITY = "cpan:potatogim";
-    $Device::Moose::SCSI::VERSION   = "0.1";
+    $Device::Moose::SCSI::VERSION   = "0.10";
 };
 
 use Moose;
