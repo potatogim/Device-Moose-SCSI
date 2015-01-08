@@ -229,7 +229,7 @@ Ji-Hyeon Gim <potatogim@potatogim.net>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright(c) 2015, by Ji-Hyeon Gim <potatogim.net>
+Copyright(c) 2015, by Ji-Hyeon Gim <potatogim@potatogim.net>
 
 This is free software; you can redistribute it and/or modify it
 under the same terms as Perl 5 itself at:
