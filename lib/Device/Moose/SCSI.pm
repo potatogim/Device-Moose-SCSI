@@ -2,7 +2,7 @@
 
 package Device::Moose::SCSI;
 {
-    $Device::Moose::SCSI::AUTHORITY = "cpan:potatogim";
+    $Device::Moose::SCSI::AUTHORITY = "cpan:POTATOGIM";
     $Device::Moose::SCSI::VERSION   = "0.11";
 };
 
