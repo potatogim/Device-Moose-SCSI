@@ -18,7 +18,7 @@ WriteMakefile (
         "Test::More" => 0,
     },
     PREREQ_PM => {
-        "Device::SCSI" => 1.004,
+        "Moose" => 0,
     },
     dist => {
         COMPRESS => "gzip -9f",
