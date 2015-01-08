@@ -1,26 +1,30 @@
 use 5.006;
 use strict;
-use warnings FATAL => 'all';
+use warnings FATAL => "all";
 use ExtUtils::MakeMaker;
 
-WriteMakefile(
-    NAME             => 'Device::Moose::SCSI',
-    AUTHOR           => q{potatogim <potatogim@potatogim.net>},
-    VERSION_FROM     => 'lib/Device/Moose/SCSI.pm',
-    ABSTRACT_FROM    => 'lib/Device/Moose/SCSI.pm',
-    LICENSE          => 'Artistic_2_0',
-    PL_FILES         => {},
-    MIN_PERL_VERSION => 5.006,
-    CONFIGURE_REQUIRES => {
-        'ExtUtils::MakeMaker' => 0,
+WriteMakefile (
+    NAME                => "Device::Moose::SCSI",
+    AUTHOR              => q{potatogim <potatogim@potatogim.net>},
+    VERSION_FROM        => "lib/Device/Moose/SCSI.pm",
+    ABSTRACT_FROM       => "lib/Device/Moose/SCSI.pm",
+    LICENSE             => "Artistic_2_0",
+    PL_FILES            => {},
+    MIN_PERL_VERSION    => 5.006,
+    CONFIGURE_REQUIRES  => {
+        "ExtUtils::MakeMaker" => 0,
     },
     BUILD_REQUIRES => {
-        'Test::More' => 0,
+        "Test::More" => 0,
     },
     PREREQ_PM => {
-        #'ABC'              => 1.6,
-        #'Foo::Bar::Module' => 5.0401,
+        "Device::SCSI" => 1.004,
     },
-    dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
-    clean => { FILES => 'Device-Moose-SCSI-*' },
+    dist => {
+        COMPRESS => "gzip -9f",
+        SUFFIX   => "gz",
+    },
+    clean => {
+        FILES => "Device-Moose-SCSI-*"
+    },
 );

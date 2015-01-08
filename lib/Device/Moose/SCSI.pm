@@ -1,141 +1,247 @@
-package Device::Moose::SCSI;
+#!/usr/bin/perl -c
 
-use 5.006;
-use strict;
-use warnings FATAL => 'all';
+package Device::Moose::SCSI;
+{
+    $Device::Moose::SCSI::AUTHORITY = "cpan:potatogim";
+    $Device::Moose::SCSI::VERSION   = "0.1";
+};
+
+use Moose;
+use namespace::clean    -except => "meta";
+
+use Carp;
+use IO::File;
+
+
+#-----------------------------------------------------------------------------
+#   Attributes
+#-----------------------------------------------------------------------------
+has "fh" =>
+(
+    is      => "ro",
+    isa     => "FileHandle",
+    writer  => "_set_fh",
+    clearer => "close",
+);
+
+has "name" =>
+(
+    is     => "ro",
+    isa    => "Str",
+    writer => "_set_name",
+);
+
+
+#-----------------------------------------------------------------------------
+#   Methods
+#-----------------------------------------------------------------------------
+sub enumerate
+{
+    my $self = shift;
+    my %args = @_;
+
+    opendir (my $dh, "/dev") || confess "Cannot read /dev: $!";
+
+    my %devs;
+
+    foreach my $file (readdir($dh))
+    {
+        my @stat = lstat("/dev/$file");
+
+        next unless (scalar(@stat));        # next if stat() failed
+        next unless (S_ISCHR($stat[2]));    # next if file isn't character special
+
+        my $major = int($stat[6] / 256);
+
+        next unless ($major == 21);         # major number of /dev/sg* is 21
+
+        my $minor = $stat[6] % 256;
+
+        next if (exists($devs{$minor}));
+
+        $devs{$minor} = $file;
+    }
+
+    return map { $devs{$_}; } sort { $a <=> $b; } keys %devs;
+}
+
+sub open
+{
+    my $self = shift;
+    my %args = @_;
+
+    $self->close() if (defined($self->fh));
+
+    if (defined($args{sg}))
+    {
+        my $fh = IO::File->new("+<$args{sg}");
+
+        if (!defined($fh))
+        {
+            confess "Cannot open $args{sg}: $!";
+            return -1;
+        }
+
+        $self->_set_fh($fh);
+        $self->_set_name($args{sg});
+    }
+
+    return 0;
+}
+
+sub execute
+{
+    my $self = shift;
+    my %args = @_;
+
+    my ($command, $wanted, $data) = @args{qw/command wanted data/};
+
+    $data = "" unless(defined($data));
+
+    my $header = pack ("i4 I x16"
+        , 36 + length($command) + length($data) # int pack_len
+        , 36 + $wanted                          # int reply_len
+        , 0                                     # int pack_id
+        , 0                                     # int result
+        , length($command) == 12 ? 1 : 0);      # unsigned int twelve_byte:1
+
+    my $iobuf = $header . $command . $data;
+
+    my $ret = syswrite($self->fh, $iobuf, length($iobuf));
+
+    confess "Cannot write to " . $self->name . ": $!" unless (defined($ret));
+
+    $ret = sysread($self->fh, $iobuf, length($header) + $wanted);
+
+    confess "Cannot read from " . $self->name . ": $!" unless (defined($ret));
+
+    my @data = unpack("i4 I C16", substr($iobuf, 0, 36));
+
+    print join(" ", @data), "\n";
+
+    confess "SCSI I/O error $data[3] on " . $self->name if ($data[3]);
+
+    return (substr($iobuf, 36), [@data[5..20]]);
+}
+
+sub inquiry
+{
+    my $self = shift;
+
+    my ($data, undef) = $self->execute(command => pack("C x3 C x1", 0x12, 96)
+        , wanted => 96);
+
+    my %enq;
+
+    @enq{qw/DEVICE VENDOR PRODUCT REVISION/} = unpack("C x7 A8 A16 A4", $data);
+
+    return \%enq;
+}
+
+
+#-----------------------------------------------------------------------------
+#   Life Cycle
+#-----------------------------------------------------------------------------
+sub BUILD
+{
+    my $self = shift;
+    my $args = shift;
+
+    if (defined($args->{sg}))
+    {
+        $self->open(sg => $args->{sg});
+    }
+}
+
+1;
+
+__END__
+
+=encoding utf8
 
 =head1 NAME
 
-Device::Moose::SCSI - The great new Device::Moose::SCSI!
-
-=head1 VERSION
-
-Version 0.01
-
-=cut
-
-our $VERSION = '0.01';
-
+Device::Moose::SCSI - Reimplementation of Device::SCSI with Moose.
 
 =head1 SYNOPSIS
 
-Quick summary of what the module does.
-
-Perhaps a little code snippet.
-
     use Device::Moose::SCSI;
 
-    my $foo = Device::Moose::SCSI->new();
-    ...
+    my $device  = Device::Moose::SCSI->new(sg => "/dev/sg0");
 
-=head1 EXPORT
+    # INQUIRY
+    my $inquiry = $device->inquiry();
 
-A list of functions that can be exported.  You can delete this section
-if you don't export anything, such as for a purely object-oriented module.
+    # TESTUNITREADY
+    my ($result, $sense) = $device->execute (
+        command => pack("C x5", 0x00)
+        , wanted => 32
+    );
 
-=head1 SUBROUTINES/METHODS
+=head1 DESCRIPTION
 
-=head2 function1
+C<Device::Moose::SCSI> reimplementation of Device::SCSI using Moose.
 
-=cut
+See L<Device::SCSI> for detail information.
 
-sub function1 {
-}
+Refer to L<http://www.tldp.org/HOWTO/archived/SCSI-Programming-HOWTO>
+if you need to know how to SCSI programming with Linux.
 
-=head2 function2
+=head1 ATTRIBUTES
 
-=cut
+=over
 
-sub function2 {
-}
+=item B<fh>
 
-=head1 AUTHOR
-
-potatogim, C<< <potatogim at potatogim.net> >>
-
-=head1 BUGS
-
-Please report any bugs or feature requests to C<bug-device-moose-scsi at rt.cpan.org>, or through
-the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Device-Moose-SCSI>.  I will be notified, and then you'll
-automatically be notified of progress on your bug as I make changes.
-
-
-
-
-=head1 SUPPORT
-
-You can find documentation for this module with the perldoc command.
-
-    perldoc Device::Moose::SCSI
-
-
-You can also look for information at:
-
-=over 4
-
-=item * RT: CPAN's request tracker (report bugs here)
-
-L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Device-Moose-SCSI>
-
-=item * AnnoCPAN: Annotated CPAN documentation
-
-L<http://annocpan.org/dist/Device-Moose-SCSI>
-
-=item * CPAN Ratings
-
-L<http://cpanratings.perl.org/d/Device-Moose-SCSI>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/Device-Moose-SCSI/>
+=item B<name>
 
 =back
 
+=head1 METHODS
 
-=head1 ACKNOWLEDGEMENTS
+=over
 
+=item B<enumerate>
 
-=head1 LICENSE AND COPYRIGHT
+=item B<open>
 
-Copyright 2015 potatogim.
+=item B<close>
 
-This program is free software; you can redistribute it and/or modify it
-under the terms of the the Artistic License (2.0). You may obtain a
-copy of the full license at:
+=item B<execute>
+
+=item B<inquiry>
+
+=back
+
+=head2 Lifecycle methods
+
+=over
+
+=item B<BUILD>
+
+=back
+
+=head1 AUTHOR
+
+Ji-Hyeon Gim <potatogim@potatogim.net>
+
+=head1 CONTRIBUTORS
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright(c) 2015, by Ji-Hyeon Gim <potatogim.net>
+
+This is free software; you can redistribute it and/or modify it
+under the same terms as Perl 5 itself at:
 
 L<http://www.perlfoundation.org/artistic_license_2_0>
 
-Any use, modification, and distribution of the Standard or Modified
-Versions is governed by this Artistic License. By using, modifying or
-distributing the Package, you accept this license. Do not use, modify,
-or distribute the Package, if you do not accept this license.
+You may obtain a copy of the full license at:
 
-If your Modified Version has been derived from a Modified Version made
-by someone other than you, you are nevertheless required to ensure that
-your Modified Version complies with the requirements of this license.
+L<http://www.perl.com/perl/misc/Artistic.html>
 
-This license does not grant you the right to use any trademark, service
-mark, tradename, or logo of the Copyright Holder.
+=head1 SEE ALSO
 
-This license includes the non-exclusive, worldwide, free-of-charge
-patent license to make, have made, use, offer to sell, sell, import and
-otherwise transfer the Package with respect to any patent claims
-licensable by the Copyright Holder that are necessarily infringed by the
-Package. If you institute patent litigation (including a cross-claim or
-counterclaim) against any party alleging that the Package constitutes
-direct or contributory patent infringement, then this Artistic License
-to you shall terminate on the date that such litigation is filed.
-
-Disclaimer of Warranty: THE PACKAGE IS PROVIDED BY THE COPYRIGHT HOLDER
-AND CONTRIBUTORS "AS IS' AND WITHOUT ANY EXPRESS OR IMPLIED WARRANTIES.
-THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-PURPOSE, OR NON-INFRINGEMENT ARE DISCLAIMED TO THE EXTENT PERMITTED BY
-YOUR LOCAL LAW. UNLESS REQUIRED BY LAW, NO COPYRIGHT HOLDER OR
-CONTRIBUTOR WILL BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, OR
-CONSEQUENTIAL DAMAGES ARISING IN ANY WAY OUT OF THE USE OF THE PACKAGE,
-EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
+L<Device::SCSI>, L<Moose>
 
 =cut
-
-1; # End of Device::Moose::SCSI
