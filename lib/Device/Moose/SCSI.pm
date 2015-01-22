@@ -2,8 +2,8 @@
 
 package Device::Moose::SCSI;
 {
-    $Device::Moose::SCSI::AUTHORITY = "cpan:POTATOGIM";
-    $Device::Moose::SCSI::VERSION   = "0.11";
+    $Device::Moose::SCSI::AUTHORITY = "cpan:potatogim";
+    $Device::Moose::SCSI::VERSION   = "0.12";
 };
 
 use Moose;
@@ -11,6 +11,7 @@ use namespace::clean    -except => "meta";
 
 use Carp;
 use IO::File;
+use Fcntl               qw/:mode/;
 
 
 #-----------------------------------------------------------------------------
@@ -40,7 +41,13 @@ sub enumerate
     my $self = shift;
     my %args = @_;
 
-    opendir (my $dh, "/dev") || confess "Cannot read /dev: $!";
+    my $dh = undef;
+
+    if (!opendir($dh, "/dev"))
+    {
+        carp "Cannot read /dev: $!";
+        return undef;
+    }
 
     my %devs;
 
@@ -48,12 +55,16 @@ sub enumerate
     {
         my @stat = lstat("/dev/$file");
 
-        next unless (scalar(@stat));        # next if stat() failed
-        next unless (S_ISCHR($stat[2]));    # next if file isn't character special
+        # next if stat() failed
+        next unless (scalar(@stat));
+
+        # next if file isn't character special or block device
+        next unless (S_ISCHR($stat[2]) || S_ISBLK($stat[2]));
 
         my $major = int($stat[6] / 256);
 
-        next unless ($major == 21);         # major number of /dev/sg* is 21
+        # major number of /dev/sg* is 21 and /dev/sd* is 8
+        next unless ($major == 21 || $major == 8);
 
         my $minor = $stat[6] % 256;
 
@@ -72,18 +83,18 @@ sub open
 
     $self->close() if (defined($self->fh));
 
-    if (defined($args{sg}))
+    if (defined($args{device}))
     {
-        my $fh = IO::File->new("+<$args{sg}");
+        my $fh = IO::File->new("+</dev/$args{device}");
 
         if (!defined($fh))
         {
-            confess "Cannot open $args{sg}: $!";
+            carp "Cannot open $args{device}: $!";
             return -1;
         }
 
         $self->_set_fh($fh);
-        $self->_set_name($args{sg});
+        $self->_set_name($args{device});
     }
 
     return 0;
@@ -109,15 +120,26 @@ sub execute
 
     my $ret = syswrite($self->fh, $iobuf, length($iobuf));
 
-    confess "Cannot write to " . $self->name . ": $!" unless (defined($ret));
+    if (!defined($ret))
+    {
+        carp "Cannot write to " . $self->name . ": $!";
+        return undef;
+    }
 
     $ret = sysread($self->fh, $iobuf, length($header) + $wanted);
 
-    confess "Cannot read from " . $self->name . ": $!" unless (defined($ret));
+    if (!defined($ret))
+    {
+        carp "Cannot read from " . $self->name . ": $!";
+        return undef;
+    }
 
     my @data = unpack("i4 I C16", substr($iobuf, 0, 36));
 
-    confess "SCSI I/O error $data[3] on " . $self->name if ($data[3]);
+    if ($data[3])
+    {
+        carp "SCSI I/O error $data[3] on " . $self->name;
+    }
 
     return (substr($iobuf, 36), [@data[5..20]]);
 }
@@ -145,9 +167,9 @@ sub BUILD
     my $self = shift;
     my $args = shift;
 
-    if (defined($args->{sg}))
+    if (defined($args->{device}))
     {
-        $self->open(sg => $args->{sg});
+        $self->open(device => $args->{device});
     }
 }
 
@@ -165,7 +187,7 @@ Device::Moose::SCSI - Reimplementation of Device::SCSI with Moose.
 
     use Device::Moose::SCSI;
 
-    my $device  = Device::Moose::SCSI->new(sg => "/dev/sg0");
+    my $device  = Device::Moose::SCSI->new(device => "/dev/sg0");
 
     # INQUIRY
     my $inquiry = $device->inquiry();
