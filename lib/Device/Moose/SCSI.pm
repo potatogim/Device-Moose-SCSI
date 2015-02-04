@@ -164,13 +164,9 @@ sub inquiry
         command => pack("C x3 C x1", 0x12, 0x60)
         , wanted => 96);
 
-    print join(", ", unpack("C*", $data)), "\n";
-
     my ($serial, $data) = $self->execute(
         command => pack("C3 x1 C x1", 0x12, 0x01, 0x80, 0x60)
         , wanted => 96);
-
-    print join(", ", unpack("C*", $data)), "\n";
 
     my %enq;
 
