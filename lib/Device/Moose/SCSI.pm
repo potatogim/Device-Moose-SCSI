@@ -32,11 +32,18 @@ has "name" =>
     writer => "_set_name",
 );
 
+has "devs" =>
+(
+    is      => "ro",
+    isa     => "HashRef",
+    builder => "_build_devs",
+);
+
 
 #-----------------------------------------------------------------------------
-#   Methods
+#   Private Methods
 #-----------------------------------------------------------------------------
-sub enumerate
+sub _build_devs
 {
     my $self = shift;
     my %args = @_;
@@ -49,7 +56,7 @@ sub enumerate
         return undef;
     }
 
-    my %devs;
+    my %devs = ();
 
     foreach my $file (readdir($dh))
     {
@@ -68,12 +75,22 @@ sub enumerate
 
         my $minor = $stat[6] % 256;
 
-        next if (exists($devs{$minor}));
-
-        $devs{$minor} = $file;
+        @{$devs{$file}}{qw/name major minor/} = ($file, $major, $minor);
     }
 
-    return map { $devs{$_}; } sort { $a <=> $b; } keys %devs;
+    return \%devs;
+}
+
+
+#-----------------------------------------------------------------------------
+#   Public Methods
+#-----------------------------------------------------------------------------
+sub enumerate
+{
+    my $self = shift;
+    my %args = @_;
+
+    return sort { $a cmp $b } keys(%{$self->devs});
 }
 
 sub open
@@ -126,7 +143,7 @@ sub execute
         return undef;
     }
 
-    $ret = sysread($self->fh, $iobuf, length($header) + $wanted);
+    $ret = sysread($self->fh, $iobuf, 36 + $wanted);
 
     if (!defined($ret))
     {
@@ -136,24 +153,29 @@ sub execute
 
     my @data = unpack("i4 I C16", substr($iobuf, 0, 36));
 
-    if ($data[3])
-    {
-        carp "SCSI I/O error $data[3] on " . $self->name;
-    }
-
-    return (substr($iobuf, 36), [@data[5..20]]);
+    return (substr($iobuf, 36), \@data);
 }
 
 sub inquiry
 {
     my $self = shift;
 
-    my ($data, undef) = $self->execute(command => pack("C x3 C x1", 0x12, 96)
+    my ($model, $data) = $self->execute(
+        command => pack("C x3 C x1", 0x12, 0x60)
         , wanted => 96);
+
+    print join(", ", unpack("C*", $data)), "\n";
+
+    my ($serial, $data) = $self->execute(
+        command => pack("C3 x1 C x1", 0x12, 0x01, 0x80, 0x60)
+        , wanted => 96);
+
+    print join(", ", unpack("C*", $data)), "\n";
 
     my %enq;
 
-    @enq{qw/DEVICE VENDOR PRODUCT REVISION/} = unpack("C x7 A8 A16 A4", $data);
+    @enq{qw/DEVICE VENDOR PRODUCT REVISION SERIAL/}
+        = (unpack("C x7 A8 A16 A4", $model), $serial);
 
     return \%enq;
 }
