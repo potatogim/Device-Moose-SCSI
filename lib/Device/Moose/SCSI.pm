@@ -160,11 +160,11 @@ sub inquiry
 {
     my $self = shift;
 
-    my ($model, $data) = $self->execute(
+    my ($model, undef) = $self->execute(
         command => pack("C x3 C x1", 0x12, 0x60)
         , wanted => 96);
 
-    my ($serial, $data) = $self->execute(
+    my ($serial, undef) = $self->execute(
         command => pack("C3 x1 C x1", 0x12, 0x01, 0x80, 0x60)
         , wanted => 96);
 
