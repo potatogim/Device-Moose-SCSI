@@ -264,6 +264,147 @@ sub inquiry
     return \%enq;
 }
 
+sub test_unit_ready
+{
+    my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        warn "[ERR] Failed to access a SCSI device";
+        return -1;
+    }
+
+    print_header(TEST_UNIT_READY) if ($self->debug);
+
+    my $lun = defined($args{lun}) ? $args{lun} : 0x00;
+
+    my ($result, $sense) = $self->execute (
+        command  => pack ("C C C C C C"
+            , TEST_UNIT_READY   # command
+            , $lun & 0xe0       # LUN/Reserved
+            , 0x00              # Reserved
+            , 0x00              # Reserved
+            , 0x00              # Reserved
+            , 0x00              # Control
+        )
+        , wanted => 32
+    );
+
+    hexdump($result) if ($self->debug);
+    print_sense($sense) if ($self->debug);
+
+    return ($sense->[IND_NO_MEDIA_SC] != NO_MEDIA_SC
+            || $sense->[IND_NO_MEDIA_SCQ] != NO_MEDIA_SCQ);
+}
+
+sub request_sense
+{
+    my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        warn "[ERR] Failed to access a SCSI device";
+        return -1;
+    }
+
+    print_header(REQUEST_SENSE) if ($self->debug);
+
+    my $lun         = $args{lun};
+    my $mx_resp_len = $args{max_resp_len};
+
+    $lun         = 0x00 if (!defined($lun));
+    $mx_resp_len = 0xff if (!defined($mx_resp_len));
+
+    my ($result, $sense) = $self->execute (
+        command => pack ("C C C C C C"
+            , REQUEST_SENSE # Operation code
+            , $lun & 0xe0   # Logical unit number/Reserved
+            , 0x00          # Reserved
+            , 0x00          # Reserved
+            , 0x00          # Allocation length
+            , 0x00          # Control
+        )
+        , wanted => 32
+    );
+
+    hexdump($result) if ($self->debug);
+    print_sense($sense) if ($self->debug);
+
+    return 0;
+}
+
+sub recv_diagnostic_results
+{
+    my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        warn "[ERR] Failed to access a SCSI device";
+        return -1;
+    }
+
+    return;
+}
+
+sub send_diagnostic
+{
+    my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        warn "[ERR] Failed to access a SCSI device";
+        return -1;
+    }
+
+    return;
+}
+
+sub read_element_status
+{
+    my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        warn "[ERR] Failed to access a SCSI device";
+        return -1;
+    }
+
+    print_header(READ_ELEMENT_STATUS) if ($self->debug);
+
+    my $lun    = defined($args{lun}) ? $args{lun} : 0x00;
+    my $voltag = defined($args{voltag}) ? $args{voltag} : 0x00;
+    my $etype  = defined($args{etype}) ? $args{etype} : 0x00;
+
+    my ($result, $sense) = $self->execute (
+        command => pack("C12"
+            , 0xb8              # READ ELEMENT STATUS
+            , $lun    & 0xe0    # Logical unit number
+              | $voltag & 0x10  # VolTag
+              | $etype  & 0x0f  # Element type code
+            , 0x00              # Starting element address MSB
+            , 0x00              # Starting element address LSB
+            , 0x00              # Number of elements MSB
+            , 0x00              # Number of elements LSB
+            , 0x00              # (Reserved)
+            , 0x00              # Allocation length MSB
+            , 0x00              # Allocation length
+            , 0x00              # Allocation length LSB
+            , 0x00              # (Reserved)
+            , 0x00              # Control
+        )
+        , wanted => 32);
+
+    hexdump($result) if ($self->debug);
+    print_sense($sense) if ($self->debug);
+
+    return 0;
+}
+
 
 #-----------------------------------------------------------------------------
 #   Class Methods
