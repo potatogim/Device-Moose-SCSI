@@ -3,8 +3,63 @@
 package Device::Moose::SCSI;
 {
     $Device::Moose::SCSI::AUTHORITY = "cpan:potatogim";
-    $Device::Moose::SCSI::VERSION   = "0.13";
+    $Device::Moose::SCSI::VERSION   = "0.12";
 };
+
+#-----------------------------------------------------------------------------
+#   Global Declarations
+#-----------------------------------------------------------------------------
+my %OPCODE;
+my %SENSE_IND;
+my %SENSE_RETURN;
+
+BEGIN
+{
+    # Operation codes
+    %OPCODE = (
+        # - All device types
+        TEST_UNIT_READY             => 0x00,
+        REQUEST_SENSE               => 0x03,
+        INQUIRY                     => 0x12,
+        MODE_SELECT                 => 0x15,    # 6
+        COPY                        => 0x18,
+        MODE_SENSE                  => 0x1a,    # 6
+        RECEIVE_DIAGNOSTIC_RESULTS  => 0x1c,
+        SEND_DIAGNOSTIC             => 0x1d,
+        COMPARE                     => 0x39,
+        COPY_AND_VERIFY             => 0x3a,
+        WRITER_BUFFER               => 0x3b,
+        READ_BUFFER                 => 0x3c,
+        CHANGE_DEFINITION           => 0x40,
+        LOG_SELECT                  => 0x4C,
+        LOG_SENSE                   => 0x4D,
+        MODE_SELECT                 => 0x55,    # 10
+        MODE_SENSE                  => 0x5A,    # 10
+        READ_ELEMENT_STATUS         => 0xb8,
+
+        # - Direct-access devices
+
+        # - Sequential-access devices
+
+        # - Medium-changer devices
+    );
+
+    # Sense index
+    %SENSE_IND = (
+        IND_NO_MEDIA_SC   => 12,
+        IND_NO_MEDIA_SCQ  => 13,
+    );
+
+    #Sense return
+    %SENSE_RETURN = (
+        NO_MEDIA_SC     => 0x3a,
+        NO_MEDIA_SCQ    => 0x00,
+    );
+};
+
+use constant \%OPCODE;
+use constant \%SENSE_IND;
+use constant \%SENSE_RETURN;
 
 use Moose;
 use namespace::clean    -except => "meta";
@@ -17,33 +72,40 @@ use Fcntl               qw/:mode/;
 #-----------------------------------------------------------------------------
 #   Attributes
 #-----------------------------------------------------------------------------
-has "fh" =>
-(
-    is      => "ro",
-    isa     => "FileHandle",
-    writer  => "_set_fh",
-    clearer => "close",
-);
-
-has "name" =>
-(
-    is     => "ro",
-    isa    => "Str",
-    writer => "_set_name",
-);
-
-has "devs" =>
+has "devices" =>
 (
     is      => "ro",
     isa     => "HashRef",
-    builder => "_build_devs",
+    builder => "_build_devices",
+);
+
+has "debug" =>
+(
+    is  => "rw",
+    isa => "Bool",
+);
+
+has "_fh" =>
+(
+    is        => "ro",
+    isa       => "FileHandle | Undef",
+    writer    => "_set_fh",
+    predicate => "is_opened",
+);
+
+has "_device" =>
+(
+    is     => "ro",
+    isa    => "Str",
+    writer => "_set_device",
+    reader => "device",
 );
 
 
 #-----------------------------------------------------------------------------
 #   Private Methods
 #-----------------------------------------------------------------------------
-sub _build_devs
+sub _build_devices
 {
     my $self = shift;
     my %args = @_;
@@ -56,10 +118,16 @@ sub _build_devs
         return undef;
     }
 
-    my %devs = ();
+    my %devices = ();
 
     foreach my $file (readdir($dh))
     {
+        if (! -r "/dev/$file")
+        {
+            carp "Cannot read /dev/$file: $!";
+            return undef;
+        }
+
         my @stat = lstat("/dev/$file");
 
         # next if stat() failed
@@ -75,10 +143,11 @@ sub _build_devs
 
         my $minor = $stat[6] % 256;
 
-        @{$devs{$file}}{qw/name major minor/} = ($file, $major, $minor);
+        @{$devices{"/dev/$file"}}{qw/device major minor/}
+            = ("/dev/$file", $major, $minor);
     }
 
-    return \%devs;
+    return \%devices;
 }
 
 
@@ -90,7 +159,7 @@ sub enumerate
     my $self = shift;
     my %args = @_;
 
-    return sort { $a cmp $b } keys(%{$self->devs});
+    return sort { $a cmp $b } keys(%{$self->devices});
 }
 
 sub open
@@ -98,21 +167,27 @@ sub open
     my $self = shift;
     my %args = @_;
 
-    $self->close() if (defined($self->fh));
-
-    if (defined($args{device}))
+    if (!defined($args{device}))
     {
-        my $fh = IO::File->new("+</dev/$args{device}");
-
-        if (!defined($fh))
-        {
-            carp "Cannot open $args{device}: $!";
-            return -1;
-        }
-
-        $self->_set_fh($fh);
-        $self->_set_name($args{device});
+        carp "Invalid parameter: device";
+        return -1;
     }
+
+    my $fh     = $self->devices->{$args{device}}->{fh};
+    my $device = $args{device};
+    my $major  = undef;
+    my $minor  = undef;
+
+    if (!defined($fh))
+    {
+        ($fh, $major, $minor) = _open($args{device});
+
+        @{$self->devices->{$args{device}}}{qw/device fh major minor/}
+            = ($args{device}, $fh, $major, $minor);
+    }
+
+    $self->_set_fh($fh);
+    $self->_set_device($device);
 
     return 0;
 }
@@ -121,6 +196,12 @@ sub execute
 {
     my $self = shift;
     my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        carp "Cannot find a opened SCSI device";
+        return undef;
+    }
 
     my ($command, $wanted, $data) = @args{qw/command wanted data/};
 
@@ -131,49 +212,145 @@ sub execute
         , 36 + $wanted                          # int reply_len
         , 0                                     # int pack_id
         , 0                                     # int result
-        , length($command) == 12 ? 1 : 0);      # unsigned int twelve_byte:1
+        , length($command) == 12);              # unsigned int twelve_byte:1
 
     my $iobuf = $header . $command . $data;
 
-    my $ret = syswrite($self->fh, $iobuf, length($iobuf));
+    my $ret = syswrite($self->_fh, $iobuf, length($iobuf));
 
     if (!defined($ret))
     {
-        carp "Cannot write to " . $self->name . ": $!";
+        carp "Cannot write to the " . $self->device . ": $!";
         return undef;
     }
 
-    $ret = sysread($self->fh, $iobuf, 36 + $wanted);
+    $ret = sysread($self->_fh, $iobuf, 36 + $wanted);
 
     if (!defined($ret))
     {
-        carp "Cannot read from " . $self->name . ": $!";
+        carp "Cannot read from the " . $self->device . ": $!";
         return undef;
     }
 
-    my @data = unpack("i4 I C16", substr($iobuf, 0, 36));
-
-    return (substr($iobuf, 36), \@data);
+    return (substr($iobuf, 36), substr($iobuf, 15, 16));
 }
 
 sub inquiry
 {
     my $self = shift;
+    my %args = @_;
+
+    if (!$self->is_opened())
+    {
+        carp "Cannot find a opened SCSI device";
+        return undef;
+    }
 
     my ($model, undef) = $self->execute(
-        command => pack("C x3 C x1", 0x12, 0x60)
+        command => pack("C x3 C x1", 0x12, 96)
         , wanted => 96);
 
     my ($serial, undef) = $self->execute(
-        command => pack("C3 x1 C x1", 0x12, 0x01, 0x80, 0x60)
+        command => pack("C3 x1 C x1", 0x12, 0x01, 0x80, 0xfc)
         , wanted => 96);
 
     my %enq;
 
-    @enq{qw/DEVICE VENDOR PRODUCT REVISION SERIAL/}
-        = (unpack("C x7 A8 A16 A4", $model), $serial);
+    @enq{qw/DEVICE VENDOR PRODUCT REVISION SERIAL/} = (
+        unpack("C x7 A8 A16 A4", $model),
+        substr($serial, 4, unpack("C", substr($serial, 3, 1)))
+    );
 
     return \%enq;
+}
+
+
+#-----------------------------------------------------------------------------
+#   Class Methods
+#-----------------------------------------------------------------------------
+sub _open
+{
+    my $path = shift;
+    my @stat = lstat($path);
+
+    # next if stat() failed
+    if (!scalar(@stat))
+    {
+        carp "Cannot stat $path: $!";
+        return undef;
+    }
+
+    # next if file isn't character special or block device
+    if (!(S_ISCHR($stat[2]) || S_ISBLK($stat[2])))
+    {
+        carp "This is not character/block device: $path";
+        return undef;
+    }
+
+    my $major = int($stat[6] / 256);
+
+    # major number of /dev/sg* is 21 and /dev/sd* is 8
+    if (!($major == 21 || $major == 8))
+    {
+        carp "This is not SCSI device: $path";
+        return undef;
+    }
+
+    my $minor = $stat[6] % 256;
+
+    my $fh = IO::File->new("+<$path");
+
+    if (!defined($fh))
+    {
+        carp "Cannot open the $path: $!";
+        return undef;
+    }
+
+    return ($fh, $major, $minor);
+}
+
+sub hexdump
+{
+    my $data = shift;
+
+    printf "     %4s\n", join(" ", map { sprintf("%4d", $_); } 1..10);
+
+    for (my $i=0, my $limit=length($data)/10 ; $i<$limit ; ++$i)
+    {
+        my @data = unpack("C10", substr($data, ($i) * 10, 10));
+
+        printf "%4s %s\n", $i, join(" ", map { sprintf("0x%02x", $_); } @data);
+    }
+}
+
+sub print_header
+{
+    my $opcode = shift;
+    my $opname = undef;
+
+    foreach my $key (keys(%OPCODE))
+    {
+        if ($OPCODE{$key} == $opcode)
+        {
+            $opname = $key;
+            last;
+        }
+    }
+
+    printf "OPERATION: %s\n", !defined($opname) ? "Unknown" : $opname;
+}
+
+sub print_sense
+{
+    my $sense = shift;
+
+    print "\n";
+
+    foreach (my $i=0; $i<2; ++$i)
+    {
+        printf "  S%d %s\n", $i, join(" "
+            , map { sprintf("0x%02x", $_); } @{$sense}[$i..$i+9]);
+    }
 }
 
 
@@ -189,8 +366,11 @@ sub BUILD
     {
         $self->open(device => $args->{device});
     }
+
+    return;
 }
 
+__PACKAGE__->meta->make_immutable();
 1;
 
 __END__
