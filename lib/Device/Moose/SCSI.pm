@@ -6,67 +6,15 @@ package Device::Moose::SCSI;
     $Device::Moose::SCSI::VERSION   = "0.12";
 };
 
-#-----------------------------------------------------------------------------
-#   Global Declarations
-#-----------------------------------------------------------------------------
-my %OPCODE;
-my %SENSE_IND;
-my %SENSE_RETURN;
-
-BEGIN
-{
-    # Operation codes
-    %OPCODE = (
-        # - All device types
-        TEST_UNIT_READY             => 0x00,
-        REQUEST_SENSE               => 0x03,
-        INQUIRY                     => 0x12,
-        MODE_SELECT                 => 0x15,    # 6
-        COPY                        => 0x18,
-        MODE_SENSE                  => 0x1a,    # 6
-        RECEIVE_DIAGNOSTIC_RESULTS  => 0x1c,
-        SEND_DIAGNOSTIC             => 0x1d,
-        COMPARE                     => 0x39,
-        COPY_AND_VERIFY             => 0x3a,
-        WRITER_BUFFER               => 0x3b,
-        READ_BUFFER                 => 0x3c,
-        CHANGE_DEFINITION           => 0x40,
-        LOG_SELECT                  => 0x4C,
-        LOG_SENSE                   => 0x4D,
-        MODE_SELECT                 => 0x55,    # 10
-        MODE_SENSE                  => 0x5A,    # 10
-        READ_ELEMENT_STATUS         => 0xb8,
-
-        # - Direct-access devices
-
-        # - Sequential-access devices
-
-        # - Medium-changer devices
-    );
-
-    # Sense index
-    %SENSE_IND = (
-        IND_NO_MEDIA_SC   => 12,
-        IND_NO_MEDIA_SCQ  => 13,
-    );
-
-    #Sense return
-    %SENSE_RETURN = (
-        NO_MEDIA_SC     => 0x3a,
-        NO_MEDIA_SCQ    => 0x00,
-    );
-};
-
-use constant \%OPCODE;
-use constant \%SENSE_IND;
-use constant \%SENSE_RETURN;
-
 use Moose;
 use namespace::clean    -except => "meta";
+use utf8;
 
 use Carp;
 use IO::File;
 use Fcntl               qw/:mode/;
+
+use Device::Moose::SCSI::Constants  qw/%SCSI_CMD/;
 
 
 #-----------------------------------------------------------------------------
@@ -275,18 +223,18 @@ sub test_unit_ready
         return -1;
     }
 
-    print_header(TEST_UNIT_READY) if ($self->debug);
+    print_header($SCSI_CMD{TEST_UNIT_READY}) if ($self->debug);
 
     my $lun = defined($args{lun}) ? $args{lun} : 0x00;
 
     my ($result, $sense) = $self->execute (
         command  => pack ("C C C C C C"
-            , TEST_UNIT_READY   # command
-            , $lun & 0xe0       # LUN/Reserved
-            , 0x00              # Reserved
-            , 0x00              # Reserved
-            , 0x00              # Reserved
-            , 0x00              # Control
+            , $SCSI_CMD{TEST_UNIT_READY}  # command
+            , $lun & 0xe0               # LUN/Reserved
+            , 0x00                      # Reserved
+            , 0x00                      # Reserved
+            , 0x00                      # Reserved
+            , 0x00                      # Control
         )
         , wanted => 32
     );
@@ -294,8 +242,10 @@ sub test_unit_ready
     hexdump($result) if ($self->debug);
     print_sense($sense) if ($self->debug);
 
-    return ($sense->[IND_NO_MEDIA_SC] != NO_MEDIA_SC
-            || $sense->[IND_NO_MEDIA_SCQ] != NO_MEDIA_SCQ);
+#    return ($sense->[$SCSI_IND{ASC}] != ($SCSI_ASC{NO_MEDIUM} >> 8)
+#                || $sense->[$SCSI_IND{ASCQ}] != $SCSI_ASC{NO_MEDIUM} & 0xff);
+
+    return $sense;
 }
 
 sub request_sense
@@ -309,7 +259,7 @@ sub request_sense
         return -1;
     }
 
-    print_header(REQUEST_SENSE) if ($self->debug);
+    print_header($SCSI_CMD{REQUEST_SENSE}) if ($self->debug);
 
     my $lun         = $args{lun};
     my $mx_resp_len = $args{max_resp_len};
@@ -319,12 +269,12 @@ sub request_sense
 
     my ($result, $sense) = $self->execute (
         command => pack ("C C C C C C"
-            , REQUEST_SENSE # Operation code
-            , $lun & 0xe0   # Logical unit number/Reserved
-            , 0x00          # Reserved
-            , 0x00          # Reserved
-            , 0x00          # Allocation length
-            , 0x00          # Control
+            , $SCSI_CMD{REQUEST_SENSE}    # Operation code
+            , $lun & 0xe0               # Logical unit number/Reserved
+            , 0x00                      # Reserved
+            , 0x00                      # Reserved
+            , 0x00                      # Allocation length
+            , 0x00                      # Control
         )
         , wanted => 32
     );
@@ -332,7 +282,7 @@ sub request_sense
     hexdump($result) if ($self->debug);
     print_sense($sense) if ($self->debug);
 
-    return 0;
+    return $sense;
 }
 
 sub recv_diagnostic_results
@@ -374,7 +324,7 @@ sub read_element_status
         return -1;
     }
 
-    print_header(READ_ELEMENT_STATUS) if ($self->debug);
+    print_header($SCSI_CMD{READ_ELEMENT_STATUS}) if ($self->debug);
 
     my $lun    = defined($args{lun}) ? $args{lun} : 0x00;
     my $voltag = defined($args{voltag}) ? $args{voltag} : 0x00;
@@ -382,27 +332,27 @@ sub read_element_status
 
     my ($result, $sense) = $self->execute (
         command => pack("C12"
-            , 0xb8              # READ ELEMENT STATUS
-            , $lun    & 0xe0    # Logical unit number
-              | $voltag & 0x10  # VolTag
-              | $etype  & 0x0f  # Element type code
-            , 0x00              # Starting element address MSB
-            , 0x00              # Starting element address LSB
-            , 0x00              # Number of elements MSB
-            , 0x00              # Number of elements LSB
-            , 0x00              # (Reserved)
-            , 0x00              # Allocation length MSB
-            , 0x00              # Allocation length
-            , 0x00              # Allocation length LSB
-            , 0x00              # (Reserved)
-            , 0x00              # Control
+            , $SCSI_CMD{READ_ELEMENT_STATUS}    # READ ELEMENT STATUS
+            , $lun    & 0xe0                    # Logical unit number
+              | $voltag & 0x10                  # VolTag
+              | $etype  & 0x0f                  # Element type code
+            , 0x00                              # Starting element address MSB
+            , 0x00                              # Starting element address LSB
+            , 0x00                              # Number of elements MSB
+            , 0x00                              # Number of elements LSB
+            , 0x00                              # (Reserved)
+            , 0x00                              # Allocation length MSB
+            , 0x00                              # Allocation length
+            , 0x00                              # Allocation length LSB
+            , 0x00                              # (Reserved)
+            , 0x00                              # Control
         )
         , wanted => 32);
 
     hexdump($result) if ($self->debug);
     print_sense($sense) if ($self->debug);
 
-    return 0;
+    return $sense;
 }
 
 
@@ -469,9 +419,9 @@ sub print_header
     my $opcode = shift;
     my $opname = undef;
 
-    foreach my $key (keys(%OPCODE))
+    foreach my $key (keys(%SCSI_CMD))
     {
-        if ($OPCODE{$key} == $opcode)
+        if ($SCSI_CMD{$key} == $opcode)
         {
             $opname = $key;
             last;
@@ -526,16 +476,44 @@ Device::Moose::SCSI - Reimplementation of Device::SCSI with Moose.
 
     use Device::Moose::SCSI;
 
-    my $device  = Device::Moose::SCSI->new(device => "/dev/sg0");
+    my $device = Device::Moose::SCSI->new(device => "/dev/sg0");
 
     # INQUIRY
     my $inquiry = $device->inquiry();
+
+    map {
+        printf ("%s : %s\n", $key, $inquiry->{$key});
+    } keys(%{$inquiry});
+
+    # above code prints such as
+    #
+    # PRODUCT : MR9240-4i
+    # SERIAL : 0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f
+    # REVISION : 2.13
+    # VENDOR : LSI
+    # DEVICE : 0
 
     # TESTUNITREADY
     my ($result, $sense) = $device->execute (
         command => pack("C x5", 0x00)
         , wanted => 32
     );
+
+    or
+
+    my $handle = Device::Moose::SCSI->new();
+
+    foreach my $device ($handle->enumerate())
+    {
+        printf "Device %s\n", $device;
+
+        $handle->open(device => $device);
+
+        # TESTUNITREADY
+        $result = $handle->test_unit_ready();
+
+        printf "Result : %d\n", $result;
+    }
 
 =head1 DESCRIPTION
 
@@ -604,3 +582,4 @@ L<http://www.perl.com/perl/misc/Artistic.html>
 L<Device::SCSI>, L<Moose>
 
 =cut
+
