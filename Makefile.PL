@@ -5,6 +5,7 @@ use ExtUtils::MakeMaker;
 
 WriteMakefile (
     NAME                => "Device::Moose::SCSI",
+    DISTNAME            => "Device-Moose-SCSI",
     AUTHOR              => q{potatogim <potatogim@potatogim.net>},
     VERSION_FROM        => "lib/Device/Moose/SCSI.pm",
     ABSTRACT_FROM       => "lib/Device/Moose/SCSI.pm",
@@ -30,4 +31,12 @@ WriteMakefile (
     clean => {
         FILES => "Device-Moose-SCSI-*"
     },
+    META_MERGE => {
+        meta_spec => { version => 2 },
+        resources => {
+            type => "git",
+            url  => "git://github.com/potatogim/Device-Moose-SCSI.git",
+            web  => "https://github.com/potatogim/Device-Moose-SCSI",
+        }
+    }
 );
